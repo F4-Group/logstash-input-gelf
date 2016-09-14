@@ -51,6 +51,9 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
   #
   config :strip_leading_underscore, :validate => :boolean, :default => true
 
+  # Whether or not to process dots in fields or leave them in place
+  config :nested_objects, :validate => :boolean, :default => false
+
   RECONNECT_BACKOFF_SLEEP = 5
   TIMESTAMP_GELF_FIELD = "timestamp".freeze
   SOURCE_HOST_FIELD = "source_host".freeze
@@ -63,12 +66,16 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
   def initialize(params)
     super
     BasicSocket.do_not_reverse_lookup = true
-  end # def initialize
+  end
+
+  # def initialize
 
   public
   def register
     require 'gelfd'
-  end # def register
+  end
+
+  # def register
 
   public
   def run(output_queue)
@@ -82,7 +89,9 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
         retry unless stop?
       end
     end # begin
-  end # def run
+  end
+
+  # def run
 
   public
   def stop
@@ -115,11 +124,14 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
 
       remap_gelf(event) if @remap
       strip_leading_underscore(event) if @strip_leading_underscore
+      nested_objects(event) if @nested_objects
       decorate(event)
 
       output_queue << event
     end
-  end # def udp_listener
+  end
+
+  # def udp_listener
 
   # generate a new LogStash::Event from json input and assign host to source_host event field.
   # @param json_gelf [String] GELF json data
@@ -156,7 +168,9 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
   rescue LogStash::Json::ParserError => e
     logger.error(PARSE_FAILURE_LOG_MESSAGE, :error => e, :data => json)
     LogStash::Event.new(MESSAGE_FIELD => json, TAGS_FIELD => [PARSE_FAILURE_TAG, '_fromjsonparser'])
-  end # def self.from_json_parse
+  end
+
+  # def self.from_json_parse
 
   # legacy_parse uses the LogStash::Json class to deserialize json
   def self.legacy_parse(json)
@@ -165,7 +179,9 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
   rescue LogStash::Json::ParserError => e
     logger.error(PARSE_FAILURE_LOG_MESSAGE, :error => e, :data => json)
     LogStash::Event.new(MESSAGE_FIELD => json, TAGS_FIELD => [PARSE_FAILURE_TAG, '_legacyjsonparser'])
-  end # def self.parse
+  end
+
+  # def self.parse
 
   # keep compatibility with all v2.x distributions. only in 2.3 will the Event#from_json method be introduced
   # and we need to keep compatibility for all v2 releases.
@@ -185,7 +201,9 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
       event["message"] = event["short_message"].dup
       event.remove("short_message")
     end
-  end # def remap_gelf
+  end
+
+  # def remap_gelf
 
   private
   def strip_leading_underscore(event)
@@ -199,5 +217,72 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
        event.set(new_key, event.get(key))
        event.remove(key)
      end
-  end # deef removing_leading_underscores
+  end
+
+  # deef removing_leading_underscores
+
+  private
+  def nested_objects(event)
+    # process nested, create objects as needed, when key is 0, create an array. if object already exists and is an array push it.
+    base_target=event.to_hash
+    base_target.keys.each do |key|
+      next unless key.include? "."
+      value = event.get(key)
+      previous_key = nil
+      first_key=nil
+      target = base_target
+
+      key.split(".").each do |subKey|
+        if previous_key.nil?
+          first_key=subKey
+        else#skip first subKey
+          if !container_has_element?(target, previous_key)
+            if subKey =~ /^\d+$/
+              set_container_element(target, previous_key, Array.new)
+            else
+              set_container_element(target, previous_key, Hash.new)
+            end
+          end
+          target = get_container_element(target, previous_key)
+        end
+        previous_key = subKey
+      end
+      set_container_element(target, previous_key, value)
+      event.remove(key)
+      event.set(first_key, base_target[first_key])
+    end
+  end
+
+  private
+  def get_container_element(container, key)
+    if container.is_a?(Array)
+      container[Integer(key)]
+    elsif container.is_a?(Hash)
+      container[key]
+    else #Event
+      raise "not an array or hash"
+    end
+  end
+
+  private
+  def set_container_element(container, key, value)
+    if container.is_a?(Array)
+      container[Integer(key)] = value
+    elsif container.is_a?(Hash)
+      container[key] = value
+    else #Event
+      raise "not an array or hash"
+    end
+  end
+
+  private
+  def container_has_element?(container, key)
+    if container.is_a?(Array)
+      !container[Integer(key)].nil?
+    elsif container.is_a?(Hash)
+      container.key?(key)
+    else
+      raise "not an array or hash"
+    end
+  end
 end # class LogStash::Inputs::Gelf
