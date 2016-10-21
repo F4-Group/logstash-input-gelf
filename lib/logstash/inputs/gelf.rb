@@ -122,10 +122,15 @@ class LogStash::Inputs::Gelf < LogStash::Inputs::Base
       event = self.class.new_event(data, client[3])
       next if event.nil?
 
-      remap_gelf(event) if @remap
-      strip_leading_underscore(event) if @strip_leading_underscore
-      nested_objects(event) if @nested_objects
-      decorate(event)
+      begin
+        remap_gelf(event) if @remap
+        strip_leading_underscore(event) if @strip_leading_underscore
+        nested_objects(event) if @nested_objects
+        decorate(event)
+      rescue => ex
+        @logger.warn("Could not process event", :exception => ex, :backtrace => ex.backtrace)
+        next
+      end
 
       output_queue << event
     end
